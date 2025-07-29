@@ -5,6 +5,8 @@ import os
 import time
 import urllib.parse
 from operator import itemgetter
+from pathlib import Path
+
 from rich.progress import track
 
 import aiohttp
@@ -242,9 +244,13 @@ class DataProvider:
     async def fetch_contents(self, book_id: int):
         book_provider_endpoint = binascii.unhexlify(BOOK_PROVIDER_ENDPOINT).decode("utf-8")
 
-        book_cache = os.path.join(self.cache_dir, str(book_id), "chunks.dat")
+        book_cache_dir = Path(self.cache_dir) / str(book_id)
+        book_cache = book_cache_dir / "chunks.dat"
 
         contents = {}
+
+        if not os.path.exists(book_cache_dir):
+            os.makedirs(book_cache_dir)
 
         if os.path.exists(book_cache):
             logger.info(f"[bold green]Found cached content[/bold green]: {book_cache}.", extra={"markup": True})
