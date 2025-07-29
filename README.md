@@ -37,8 +37,6 @@ uv venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 ```
 
-### 3. Install [WeasyPrint](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#) 
-
 ### 4. Run the application
 ```bash
 uv run python main.py
@@ -49,9 +47,10 @@ uv run python main.py
 book-manager/
 ├── book_manager/        
 │   ├── __init__.py
-│   ├── models.py
-│   ├── manager.py
-│   └── ...
+│   ├── auth.py          # Command encryption
+│   ├── config.py        # Application level config model
+│   ├── provider.py      # Data fetching
+│   └── render.py        # PDF rendering
 ├── main.py              # Entry point
 ├── pyproject.toml       # Project metadata
 └── README.md
