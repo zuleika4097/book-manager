@@ -37,7 +37,7 @@ uv venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 ```
 
-### 4. Run the application
+### 3. Run the application
 ```bash
 uv run python main.py
 ```
