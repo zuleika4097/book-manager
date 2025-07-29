@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     auth_token: str
     recaptcha_token: str
 
-    page_width: int
+    page_width: int = 1280
+
     cache_dir: str = DEFAULT_CACHE_DIR
     task_concurrency: int = 50

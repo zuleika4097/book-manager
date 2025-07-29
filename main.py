@@ -40,12 +40,6 @@ def prompt_credentials():
 
     auth_token = Prompt.ask("Enter your authentication token")
     recaptcha_token = Prompt.ask("Enter your recaptcha token")
-    page_width = Prompt.ask("Enter the page width")
-    try:
-        page_width = int(page_width)
-    except ValueError:
-        print("[bold red]Error[/bold red]: Page width must be a valid integer.")
-        exit(1)
     create_config = Prompt.ask(
         r"Do you want to create a config file?",
         choices=["yes", "no"],
@@ -57,7 +51,6 @@ def prompt_credentials():
                     f"BOOK_ID={book_id}\n",
                     f"AUTH_token={auth_token}\n",
                     f"RECAPTCHA_TOKEN={recaptcha_token}\n",
-                    f"PAGE_WIDTH={page_width}\n",
                 ]
             )
 
@@ -65,7 +58,6 @@ def prompt_credentials():
         book_id=book_id,
         auth_token=auth_token,
         recaptcha_token=recaptcha_token,
-        page_width=page_width,
     )
 
 
@@ -134,18 +126,18 @@ async def main():
     async with TaskGroup() as task_group:
         for chapter_no, chapter in track(chapters.items(), description="Converting to PDF..."):
 
-            async def wrapper():
-                page = await page_render(browser, chapter_no, chapter, book_chapter_cache_dir, metadata.format)
-                pages[chapter_no] = page
+            async def wrapper(_chapter_no, _chapter):
+                page = await page_render(browser, _chapter_no, _chapter, book_chapter_cache_dir, metadata.format)
+                pages[_chapter_no] = page
                 task_semaphore.release()
 
             await task_semaphore.acquire()
-            task_group.create_task(wrapper())
+            task_group.create_task(wrapper(chapter_no, chapter))
 
     await browser.close()
 
-    for chapter_no, document in sorted(pages.items()):
-        writer.append(BytesIO(document))
+    for chapter_no, page in sorted(pages.items()):
+        writer.append(BytesIO(page))
 
     writer.write(f"{file_name}.pdf")
     writer.close()
