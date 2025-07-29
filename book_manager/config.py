@@ -9,3 +9,5 @@ class Settings(BaseSettings):
     book_id: int
     auth_token: str
     recaptcha_token: str
+
+    page_width: int

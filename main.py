@@ -27,6 +27,12 @@ def prompt_credentials():
 
     auth_token = Prompt.ask("Enter your authentication token")
     recaptcha_token = Prompt.ask("Enter your recaptcha token")
+    page_width = Prompt.ask("Enter the page width")
+    try:
+        page_width = int(page_width)
+    except ValueError:
+        print("[bold red]Error[/bold red]: Page width must be a valid integer.")
+        exit(1)
     create_config = Prompt.ask(
         r"Do you want to create a config file?",
         choices=["yes", "no"],
@@ -38,6 +44,7 @@ def prompt_credentials():
                     f"BOOK_ID={book_id}\n",
                     f"AUTH_token={auth_token}\n",
                     f"RECAPTCHA_TOKEN={recaptcha_token}\n",
+                    f"PAGE_WIDTH={page_width}\n",
                 ]
             )
 
@@ -56,7 +63,9 @@ async def main():
         config = prompt_credentials()
 
     provider = DataProvider(
-        auth_token=config.auth_token, recaptcha_token=config.recaptcha_token
+        auth_token=config.auth_token,
+        recaptcha_token=config.recaptcha_token,
+        width=config.page_width,
     )
 
     try:
@@ -73,7 +82,8 @@ async def main():
     if response == "no":
         exit(1)
 
-    print(metadata)
+    contents = await provider.fetch_contents(config.book_id)
+    print(contents)
 
 
 if __name__ == "__main__":
