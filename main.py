@@ -136,6 +136,7 @@ async def main():
 
     await browser.close()
 
+    print("Merging pages...")
     for chapter_no, page in sorted(pages.items()):
         writer.append(BytesIO(page))
 
