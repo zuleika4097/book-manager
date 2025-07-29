@@ -8,6 +8,11 @@ dependencies = [
     "aiohttp>=3.12.15",
     "pycryptodome>=3.23.0",
     "pydantic-settings>=2.10.1",
+    "pypdf>=5.9.0",
+    "pyppeteer>=2.0.0",
     "rich>=14.1.0",
-    "websockets>=15.0.1",
+    "websockets>=10.4",
 ]
+
+[tool.ruff]
+line-length = 120

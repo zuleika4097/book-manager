@@ -1,19 +1,32 @@
 import asyncio
+import logging
+import re
+import os
+import shutil
+from asyncio import TaskGroup
+from io import BytesIO
 
+import pyppeteer
 import pydantic
+from pypdf import PdfWriter
 from rich import print
 from rich.panel import Panel
+from rich.progress import track
 from rich.prompt import Prompt
+from rich.logging import RichHandler
 
 from book_manager.config import Settings
 from book_manager.provider import DataProvider, DataProviderError
+from book_manager.render import page_render
+
+FORMAT = "%(message)s"
+logging.basicConfig(level="INFO", format=FORMAT, datefmt="[%X]", handlers=[RichHandler()])
 
 
 def prompt_credentials():
     print(
         Panel(
-            "Instructions for obtaining the tokens can be found "
-            "[link=https://youtu.be/X4msqCulOYk]here[/link].",
+            "Instructions for obtaining the tokens can be found " "[link=https://youtu.be/X4msqCulOYk]here[/link].",
             title="Note",
             style="gray50",
         )
@@ -49,7 +62,10 @@ def prompt_credentials():
             )
 
     return Settings(
-        book_id=book_id, auth_token=auth_token, recaptcha_token=recaptcha_token
+        book_id=book_id,
+        auth_token=auth_token,
+        recaptcha_token=recaptcha_token,
+        page_width=page_width,
     )
 
 
@@ -66,6 +82,7 @@ async def main():
         auth_token=config.auth_token,
         recaptcha_token=config.recaptcha_token,
         width=config.page_width,
+        cache_dir=config.cache_dir,
     )
 
     try:
@@ -82,8 +99,59 @@ async def main():
     if response == "no":
         exit(1)
 
-    contents = await provider.fetch_contents(config.book_id)
-    print(contents)
+    try:
+        chapters = await provider.fetch_contents(book_id=config.book_id)
+    except DataProviderError as e:
+        print(f"[bold red]Error[/bold red]: {e}")
+        exit(1)
+
+    file_name = re.sub(r"\W+|^(?=\d)", "_", metadata.title)
+    book_chapter_cache_dir = os.path.join(os.path.abspath(config.cache_dir), str(config.book_id), "chapters")
+    if not os.path.exists(book_chapter_cache_dir):
+        os.makedirs(book_chapter_cache_dir)
+
+    browser = await pyppeteer.launch(
+        options={
+            "headless": True,
+            "autoClose": False,
+            "args": [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-accelerated-2d-canvas",
+                "--no-first-run",
+                "--no-zygote",
+                "--disable-web-security",
+                "--webkit-print-color-adjust",
+                "--disable-extensions",
+            ],
+        },
+    )
+
+    task_semaphore = asyncio.Semaphore(config.task_concurrency)
+    writer = PdfWriter()
+    pages = {}
+    async with TaskGroup() as task_group:
+        for chapter_no, chapter in track(chapters.items(), description="Converting to PDF..."):
+
+            async def wrapper():
+                page = await page_render(browser, chapter_no, chapter, book_chapter_cache_dir, metadata.format)
+                pages[chapter_no] = page
+                task_semaphore.release()
+
+            await task_semaphore.acquire()
+            task_group.create_task(wrapper())
+
+    await browser.close()
+
+    for chapter_no, document in sorted(pages.items()):
+        writer.append(BytesIO(document))
+
+    writer.write(f"{file_name}.pdf")
+    writer.close()
+    shutil.rmtree(book_chapter_cache_dir)
+
+    print("[bold]Done.[/bold]")
 
 
 if __name__ == "__main__":

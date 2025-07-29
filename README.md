@@ -36,7 +36,10 @@ cd book-manager
 uv venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 ```
-### 3. Run the application
+
+### 3. Install [WeasyPrint](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html#) 
+
+### 4. Run the application
 ```bash
 uv run python main.py
 ```
