@@ -31,13 +31,13 @@ See the uv [installation guide](https://docs.astral.sh/uv/getting-started/featur
 git clone https://github.com/your-username/book-manager.git
 cd book-manager
 ```
-### 2. Create a virtual environment:
+### 2. Create a virtual environment
 ```bash
 uv venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 ```
 
-### 3. Run the application
+### 3. Run the application and follow the instructions
 ```bash
 uv run python main.py
 ```
