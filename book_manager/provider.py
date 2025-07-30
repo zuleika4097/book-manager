@@ -51,7 +51,7 @@ class BookMetadata(BaseModel):
 class BookChapterMetadata(BaseModel):
     book_type: str = Field(validation_alias="bookType")
     num_chapters: int = Field(validation_alias="numberOfChapters")
-    book_map: dict[int, list[int]] | None = Field(validation_alias="bookMap")
+    book_map: dict[int, list[int]] | None = Field(None, validation_alias="bookMap")
 
     @model_validator(mode="before")
     @classmethod
