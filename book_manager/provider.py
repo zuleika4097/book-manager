@@ -41,11 +41,19 @@ class DataProviderError(Exception):
 
 class BookMetadata(BaseModel):
     title: str
-    subtitle: str | None
     author: str
-    num_pages: int
-    isbn13: str | None
-    format: str | None
+    subtitle: str | None = None
+    num_pages: int | None = None
+    isbn13: str | None = None
+    format: str | None = None
+
+    @field_validator("num_pages", mode="before")
+    @classmethod
+    def corce_empty(cls, value: Any) -> Any:
+        if value == "":
+            return None
+
+        return value
 
 
 class BookChapterMetadata(BaseModel):
@@ -237,11 +245,13 @@ class DataProvider:
                 raise DataProviderError(f"Server error({code}): {message}")
 
             chunk_data = parsed_response.data
+            total_merged_chapter_num = (
+                chunk_data.total_merged_chapter_num if chunk_data.total_merged_chapter_num is not None else 1
+            )
             merged_chapter_content = page_content.setdefault(chunk_data.merged_chapter_num, {})
             merged_chapter_content[chunk_data.chunk_num] = chunk_data.content
             merged_chapter_chunk_sizes[chunk_data.merged_chapter_num] = chunk_data.total_chunk_num
-
-            if len(page_content) < chunk_data.total_merged_chapter_num:
+            if len(page_content) < total_merged_chapter_num:
                 continue
 
             if any(
