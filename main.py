@@ -26,7 +26,7 @@ logging.basicConfig(level="INFO", format=FORMAT, datefmt="[%X]", handlers=[RichH
 def prompt_credentials():
     print(
         Panel(
-            "Instructions for obtaining the tokens can be found " "[link=https://youtu.be/X4msqCulOYk]here[/link].",
+            "Instructions for obtaining the tokens can be found [link=https://youtu.be/X4msqCulOYk]here[/link].",
             title="Note",
             style="gray50",
         )
