@@ -4,6 +4,10 @@ import re
 from pyppeteer.browser import Browser
 
 
+EPUB_HORIZONTAL_MARGIN = 62
+EPUB_VERTICAL_MARGIN = 56
+
+
 def pre_render_content(contents: str):
     match = re.search(
         r'<img id="trigger" data-chapterid="[0-9]*?" src="" onerror="LoadChapter\(&apos;[0-9]*?&apos;\)" />',
@@ -49,7 +53,12 @@ async def page_render(browser: Browser, chapter_no: int, chapter: str, cache_dir
             options["width"] = width
             options["height"] = height
         case "EPUB":
-            options["margin"] = {"top": "20", "bottom": "20", "left": "20", "right": "20"}
+            options["margin"] = {
+                "top": str(EPUB_VERTICAL_MARGIN),
+                "bottom": str(EPUB_VERTICAL_MARGIN),
+                "left": str(EPUB_HORIZONTAL_MARGIN),
+                "right": str(EPUB_HORIZONTAL_MARGIN),
+            }
 
     document = await page.pdf(options)
     await page.close()
