@@ -129,7 +129,7 @@ class LoadPageCommand(BaseModel):
 
     @field_serializer("data")
     def encode_data(self, data: LoadPageCommandData, _info):
-        return encrypt(data.model_dump_json()).decode("utf-8")
+        return encrypt(data.auth_token, data.model_dump_json()).decode("utf-8")
 
 
 class PageLoadCommandChunk(BaseModel):
