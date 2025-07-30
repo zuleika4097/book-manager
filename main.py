@@ -11,7 +11,7 @@ import pydantic
 from pypdf import PdfWriter
 from rich import print
 from rich.panel import Panel
-from rich.progress import track
+from rich.progress import track, Progress
 from rich.prompt import Prompt
 from rich.logging import RichHandler
 
@@ -89,15 +89,22 @@ async def main():
     )
 
     if response == "no":
-        exit(1)
+        exit(0)
 
+    chapters = {}
     try:
-        chapters = await provider.fetch_contents(book_id=config.book_id)
+        with Progress() as progress_bar:
+            task = progress_bar.add_task(description="Downloading chapters...", total=metadata.num_pages)
+            async for chapter_no, chapter in provider.fetch_contents(book_id=config.book_id):
+                chapters[chapter_no] = chapter
+                progress_bar.update(task, advance=1)
+
     except DataProviderError as e:
         print(f"[bold red]Error[/bold red]: {e}")
         exit(1)
 
-    file_name = re.sub(r"\W+|^(?=\d)", "_", metadata.title)
+    title_as_identifier = re.sub(r"\W+|^(?=\d)", "_", metadata.title)
+    file_name = f"{title_as_identifier}.pdf"
     book_chapter_cache_dir = os.path.join(os.path.abspath(config.cache_dir), str(config.book_id), "chapters")
     if not os.path.exists(book_chapter_cache_dir):
         os.makedirs(book_chapter_cache_dir)
@@ -140,7 +147,8 @@ async def main():
     for chapter_no, page in sorted(pages.items()):
         writer.append(BytesIO(page))
 
-    writer.write(f"{file_name}.pdf")
+    print(f"Writing {file_name}...")
+    writer.write(file_name)
     writer.close()
     shutil.rmtree(book_chapter_cache_dir)
 

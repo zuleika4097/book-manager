@@ -2,15 +2,24 @@ import binascii
 import json
 import logging
 import os
+import re
 import time
 import urllib.parse
 from operator import itemgetter
 from pathlib import Path
-
-from rich.progress import track
+from typing import Any, Literal
 
 import aiohttp
-from pydantic import BaseModel
+from pydantic import (
+    BaseModel,
+    Field,
+    model_validator,
+    computed_field,
+    TypeAdapter,
+    field_serializer,
+    ConfigDict,
+    field_validator,
+)
 from websockets.client import WebSocketClientProtocol, connect
 
 from book_manager.auth import encrypt
@@ -26,23 +35,114 @@ BOOK_PROVIDER_ENDPOINT = b"7773733a2f2f6170692d77732e7065726c65676f2e636f6d2f626
 logger = logging.getLogger("rich")
 
 
+class DataProviderError(Exception):
+    pass
+
+
 class BookMetadata(BaseModel):
     title: str
     subtitle: str | None
     author: str
+    num_pages: int
     isbn13: str | None
     format: str | None
-    cover_url: str | None
 
 
 class BookChapterMetadata(BaseModel):
-    book_type: str
-    num_chapters: int
-    book_map: dict[int, int | None]
+    book_type: str = Field(validation_alias="bookType")
+    num_chapters: int = Field(validation_alias="numberOfChapters")
+    book_map: dict[int, list[int]] | None = Field(validation_alias="bookMap")
+
+    @model_validator(mode="before")
+    @classmethod
+    def remove_double_encoding(cls, data: Any) -> Any:
+        if not isinstance(data, str):
+            return data
+
+        return json.loads(data)
+
+    @computed_field
+    def chapter_lengths(self) -> dict[int, int]:
+        if self.book_map is None:
+            return {i + 1: 1 for i in range(self.num_chapters)}
+
+        book_map = {key: len(value) + 1 for key, value in self.book_map.items()}
+        return book_map
 
 
-class DataProviderError(Exception):
-    pass
+class ErrorDetails(BaseModel):
+    code: int
+    message: str
+
+
+class ErrorResponse(BaseModel):
+    event: Literal["error"]
+    data: ErrorDetails
+
+
+class InitCommandData(BaseModel):
+    auth_token: str = Field(serialization_alias="authToken")
+    recaptcha_token: str = Field(serialization_alias="reCaptchaToken")
+    book_id: int = Field(serialization_alias="bookId")
+
+    model_config = ConfigDict(serialize_by_alias=True)
+
+
+class InitCommand(BaseModel):
+    action: Literal["initialise"]
+    data: InitCommandData
+
+
+class InitCommandResponseChunk(BaseModel):
+    total_chunk_num: int = Field(validation_alias="numberOfChunks")
+    chunk_num: int = Field(validation_alias="chunkNumber")
+    content: str
+
+
+class InitCommandResponse(BaseModel):
+    event: Literal["initialisationDataChunk"]
+    data: InitCommandResponseChunk
+
+
+class LoadPageCommandData(BaseModel):
+    auth_token: str = Field(serialization_alias="authToken")
+    page_id: int = Field(serialization_alias="pageId")
+    book_format: str = Field(serialization_alias="bookType")
+    width: int = Field(serialization_alias="windowWidth")
+    part_index: int = Field(serialization_alias="mergedChapterPartIndex")
+    timestamp: int = Field(serialization_alias="clientTimestamp", default_factory=lambda: int(time.time() * 1000))
+
+    model_config = ConfigDict(serialize_by_alias=True)
+
+
+class LoadPageCommand(BaseModel):
+    action: Literal["loadPage"]
+    data: LoadPageCommandData
+
+    @field_serializer("data")
+    def encode_data(self, data: LoadPageCommandData, _info):
+        return encrypt(data.model_dump_json()).decode("utf-8")
+
+
+class PageLoadCommandChunk(BaseModel):
+    total_chunk_num: int = Field(validation_alias="numberOfChunks")
+    chunk_num: int = Field(validation_alias="chunkNumber")
+    total_merged_chapter_num: int | None = Field(None, validation_alias="mergedChapterNumber")
+    merged_chapter_num: int | None = Field(None, validation_alias="numberOfMergedChapters")
+    content: str
+
+
+class LoadPageCommandResponse(BaseModel):
+    event: str
+    data: PageLoadCommandChunk
+
+    @field_validator("event", mode="after")
+    @classmethod
+    def validate_event(cls, event: str) -> str:
+        if not re.match(r"^pageChunk-\d+$", event):
+            raise ValueError(f"Unexpected event: {event}")
+
+        return event
 
 
 class DataProvider:
@@ -80,151 +180,68 @@ class DataProvider:
             raise DataProviderError(f"No results found for book id {book_id}.")
 
         book_metadata = meta_info[0]
-        title = book_metadata.get("title")
-        if title is None:
-            raise DataProviderError(f"No title found on book id {book_id}.")
-
-        author = book_metadata.get("author")
-        if author is None:
-            raise DataProviderError(f"No author found on book id {book_id}.")
-
-        return BookMetadata(
-            title=title,
-            subtitle=book_metadata.get("subtitle"),
-            author=author,
-            isbn13=book_metadata.get("isbn13"),
-            format=book_metadata.get("format"),
-            cover_url=book_metadata.get("cover"),
-        )
+        return BookMetadata.model_validate(book_metadata)
 
     async def initialize(self, socket: WebSocketClientProtocol, book_id: int):
-        message = json.dumps(
-            {
-                "action": "initialise",
-                "data": {
-                    "authToken": self.auth_token,
-                    "reCaptchaToken": self.recaptcha_token,
-                    "bookId": book_id,
-                },
-            }
+        command = InitCommand(
+            action="initialise",
+            data=InitCommandData(auth_token=self.auth_token, recaptcha_token=self.recaptcha_token, book_id=book_id),
         )
-        await socket.send(message)
+        await socket.send(command.model_dump_json())
 
         chunk_info: dict[int, str] = {}
-
         while True:
             response = await socket.recv()
+            adapter: TypeAdapter[ErrorResponse | InitCommandResponse] = TypeAdapter(ErrorResponse | InitCommandResponse)
+            parsed_response = adapter.validate_json(response)
+            if isinstance(parsed_response, ErrorResponse):
+                code = parsed_response.data.code
+                message = parsed_response.data.message
+                raise DataProviderError(f"Server error({code}): {message}")
 
-            try:
-                load_page_response = json.loads(response)
-            except json.JSONDecodeError as e:
-                raise DataProviderError("Invalid response format") from e
-
-            event = load_page_response.get("event")
-            if event == "error":
-                code = load_page_response.get("code", "Unknown")
-                raise DataProviderError(f"Server error: {code}")
-
-            if event != "initialisationDataChunk":
-                raise DataProviderError(f"Unexpected event: {event}")
-
-            data = load_page_response.get("data")
-            if data is None:
-                raise DataProviderError("No data returned")
-
-            total_chunk_num = data.get("numberOfChunks")
-            if total_chunk_num is None:
-                raise DataProviderError("Missing total chunk number")
-
-            chunk_num = data.get("chunkNumber")
-            if chunk_num is None:
-                raise DataProviderError("Missing chunk number")
-
-            content = data.get("content")
-            if content is None:
-                raise DataProviderError("Missing content")
-
-            chunk_info[chunk_num] = content
-            if len(chunk_info) < total_chunk_num:
+            chunk_data = parsed_response.data
+            chunk_info[chunk_data.chunk_num] = chunk_data.content
+            if len(chunk_info) < chunk_data.total_chunk_num:
                 continue
 
             break
 
-        # Meta is double encoded
         full_content = "".join(map(itemgetter(1), sorted(chunk_info.items())))
-        book_chapter_meta = json.loads(full_content)
-        book_chapter_meta = json.loads(book_chapter_meta)
-        book_type = book_chapter_meta.get("bookType")
-        if book_type is None:
-            raise DataProviderError("Missing book type")
-
-        num_chapters = book_chapter_meta.get("numberOfChapters")
-        if num_chapters is None:
-            raise DataProviderError("Missing number of chapters")
-
-        book_map = book_chapter_meta.get("bookMap", {i + 1: None for i in range(num_chapters)})
-        book_map = {key: int(len(value)) if value is not None else 0 for key, value in book_map.items()}
-        return BookChapterMetadata(book_type=book_type, num_chapters=num_chapters, book_map=book_map)
+        book_chapter_meta = BookChapterMetadata.model_validate_json(full_content)
+        return book_chapter_meta
 
     async def load_page(self, socket: WebSocketClientProtocol, book_format: str, page_id: int, part_index: int):
-        timestamp = int(time.time() * 1000)
-        data = json.dumps(
-            {
-                "authToken": self.auth_token,
-                "pageId": page_id,
-                "bookType": book_format,
-                "windowWidth": self.width,
-                "mergedChapterPartIndex": part_index,
-                "clientTimestamp": timestamp,
-            }
+        command = LoadPageCommand(
+            action="loadPage",
+            data=LoadPageCommandData(
+                auth_token=self.auth_token,
+                page_id=page_id,
+                book_format=book_format,
+                width=self.width,
+                part_index=part_index,
+            ),
         )
-        message = json.dumps({"action": "loadPage", "data": encrypt(data).decode("utf-8")})
-        await socket.send(message)
+        await socket.send(command.model_dump_json())
 
-        page_content = {}
-        merged_chapter_chunk_sizes = {}
+        page_content: dict[int, dict[int, str]] = {}
+        merged_chapter_chunk_sizes: dict[int, int] = {}
         while True:
             response = await socket.recv()
+            adapter: TypeAdapter[ErrorResponse | LoadPageCommandResponse] = TypeAdapter(
+                ErrorResponse | LoadPageCommandResponse
+            )
+            parsed_response = adapter.validate_json(response)
+            if isinstance(parsed_response, ErrorResponse):
+                code = parsed_response.data.code
+                message = parsed_response.data.message
+                raise DataProviderError(f"Server error({code}): {message}")
 
-            try:
-                load_page_response = json.loads(response)
-            except json.JSONDecodeError as e:
-                raise DataProviderError("Invalid response format") from e
+            chunk_data = parsed_response.data
+            merged_chapter_content = page_content.setdefault(chunk_data.merged_chapter_num, {})
+            merged_chapter_content[chunk_data.chunk_num] = chunk_data.content
+            merged_chapter_chunk_sizes[chunk_data.merged_chapter_num] = chunk_data.total_chunk_num
 
-            event: str = load_page_response.get("event")
-            data = load_page_response.get("data", {})
-            if event == "error":
-                code = data.get("code", "Unknown")
-                message = data.get("message", "Unknown")
-                raise DataProviderError(f"Server error ({code}): {message}")
-
-            if not event.startswith("pageChunk"):
-                raise DataProviderError(f"Unexpected event: {event}")
-
-            data = load_page_response.get("data")
-            if data is None:
-                raise DataProviderError("No data returned")
-
-            total_chunk_num = data.get("numberOfChunks")
-            if total_chunk_num is None:
-                raise DataProviderError("Missing total chunk number")
-
-            chunk_num = data.get("chunkNumber")
-            if chunk_num is None:
-                raise DataProviderError("Missing chunk number")
-
-            total_merged_chapter_num = data.get("numberOfMergedChapters", 1)
-            merged_chapter_num = data.get("mergedChapterNumber", 1)
-
-            content = data.get("content")
-            if content is None:
-                raise DataProviderError("No content returned")
-
-            merged_chapter_content = page_content.setdefault(merged_chapter_num, {})
-            merged_chapter_content[chunk_num] = content
-            merged_chapter_chunk_sizes[merged_chapter_num] = total_chunk_num
-
-            if len(page_content) < total_merged_chapter_num:
+            if len(page_content) < chunk_data.total_merged_chapter_num:
                 continue
 
             if any(
@@ -247,7 +264,7 @@ class DataProvider:
         book_cache_dir = Path(self.cache_dir) / str(book_id)
         book_cache = book_cache_dir / "chunks.dat"
 
-        contents = {}
+        content_cache: dict[int, str] = {}
 
         if not os.path.exists(book_cache_dir):
             os.makedirs(book_cache_dir)
@@ -255,25 +272,23 @@ class DataProvider:
         if os.path.exists(book_cache):
             logger.info(f"[bold green]Found cached content[/bold green]: {book_cache}.", extra={"markup": True})
             with open(book_cache, "r", encoding="utf-8") as f:
-                cached_content = json.load(f)
-                contents = {int(key): part for key, part in cached_content.items()}
+                adapter = TypeAdapter(dict[int, str])
+                raw_content_cache = f.read()
+                content_cache = adapter.validate_json(raw_content_cache)
 
         try:
             async with connect(book_provider_endpoint) as socket:
                 book_chapter_meta = await self.initialize(socket, book_id)
 
-                for chapter, part_count in track(
-                    book_chapter_meta.book_map.items(),
-                    description="Downloading chapters...",
-                ):
-                    for part_no in range(part_count + 1):
-                        if chapter + part_no in contents:
+                for chapter, part_count in book_chapter_meta.chapter_lengths.items():
+                    for part_no in range(part_count):
+                        if chapter + part_no in content_cache:
                             continue
 
                         part_content = await self.load_page(socket, book_chapter_meta.book_type, chapter, part_no)
-                        contents[chapter + part_no] = part_content
+                        content_cache[chapter + part_no] = part_content
+                        yield chapter + part_no, part_content
 
-            return contents
         finally:
             with open(book_cache, "w", encoding="utf-8") as f:
-                json.dump(contents, f)
+                json.dump(content_cache, f)
