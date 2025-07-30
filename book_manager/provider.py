@@ -245,11 +245,13 @@ class DataProvider:
                 raise DataProviderError(f"Server error({code}): {message}")
 
             chunk_data = parsed_response.data
+            total_merged_chapter_num = (
+                chunk_data.total_merged_chapter_num if chunk_data.total_merged_chapter_num is not None else 1
+            )
             merged_chapter_content = page_content.setdefault(chunk_data.merged_chapter_num, {})
             merged_chapter_content[chunk_data.chunk_num] = chunk_data.content
             merged_chapter_chunk_sizes[chunk_data.merged_chapter_num] = chunk_data.total_chunk_num
-
-            if len(page_content) < chunk_data.total_merged_chapter_num:
+            if len(page_content) < total_merged_chapter_num:
                 continue
 
             if any(
