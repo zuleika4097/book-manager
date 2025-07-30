@@ -91,13 +91,13 @@ async def main():
     if response == "no":
         exit(0)
 
-    chapters = {}
+    book_parts = {}
     try:
         with Progress() as progress_bar:
             task = progress_bar.add_task(description="Downloading chapters...", total=metadata.num_pages)
-            async for chapter_no, chapter in provider.fetch_contents(book_id=config.book_id):
-                chapters[chapter_no] = chapter
-                progress_bar.update(task, advance=1)
+            async for part_no, content, num_parts in provider.fetch_contents(book_id=config.book_id):
+                book_parts[part_no] = content
+                progress_bar.update(task, completed=part_no + 1, total=num_parts)
 
     except DataProviderError as e:
         print(f"[bold red]Error[/bold red]: {e}")
@@ -127,23 +127,23 @@ async def main():
         },
     )
 
-    task_semaphore = asyncio.Semaphore(config.task_concurrency)
-    writer = PdfWriter()
     pages = {}
     async with TaskGroup() as task_group:
-        for chapter_no, chapter in track(chapters.items(), description="Converting to PDF..."):
+        task_semaphore = asyncio.Semaphore(config.task_concurrency)
+        for part_no, content in track(book_parts.items(), description="Converting to PDF..."):
 
-            async def wrapper(_chapter_no, _chapter):
-                page = await page_render(browser, _chapter_no, _chapter, book_chapter_cache_dir, metadata.format)
-                pages[_chapter_no] = page
+            async def wrapper(_part_no, _content):
+                page = await page_render(browser, _part_no, _content, book_chapter_cache_dir, metadata.format)
+                pages[_part_no] = page
                 task_semaphore.release()
 
             await task_semaphore.acquire()
-            task_group.create_task(wrapper(chapter_no, chapter))
+            task_group.create_task(wrapper(part_no, content))
 
     await browser.close()
 
     print("Merging pages...")
+    writer = PdfWriter()
     for chapter_no, page in sorted(pages.items()):
         writer.append(BytesIO(page))
 

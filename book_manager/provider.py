@@ -279,15 +279,18 @@ class DataProvider:
         try:
             async with connect(book_provider_endpoint) as socket:
                 book_chapter_meta = await self.initialize(socket, book_id)
-
-                for chapter, part_count in book_chapter_meta.chapter_lengths.items():
+                sorted_chapter_meta = sorted(book_chapter_meta.chapter_lengths.items())
+                num_parts = sum(map(itemgetter(1), sorted_chapter_meta))
+                for chapter, part_count in sorted_chapter_meta:
                     for part_no in range(part_count):
-                        if chapter + part_no in content_cache:
-                            continue
+                        part_ind = chapter + part_no
+                        if part_ind in content_cache:
+                            part_content = content_cache[part_ind]
+                        else:
+                            part_content = await self.load_page(socket, book_chapter_meta.book_type, chapter, part_no)
+                            content_cache[part_ind] = part_content
 
-                        part_content = await self.load_page(socket, book_chapter_meta.book_type, chapter, part_no)
-                        content_cache[chapter + part_no] = part_content
-                        yield chapter + part_no, part_content
+                        yield part_ind, part_content, num_parts
 
         finally:
             with open(book_cache, "w", encoding="utf-8") as f:
