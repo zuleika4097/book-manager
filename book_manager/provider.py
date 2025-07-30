@@ -41,11 +41,19 @@ class DataProviderError(Exception):
 
 class BookMetadata(BaseModel):
     title: str
-    subtitle: str | None
     author: str
-    num_pages: int
-    isbn13: str | None
-    format: str | None
+    subtitle: str | None = None
+    num_pages: int | None = None
+    isbn13: str | None = None
+    format: str | None = None
+
+    @field_validator("num_pages", mode="before")
+    @classmethod
+    def corce_empty(cls, value: Any) -> Any:
+        if value == "":
+            return None
+
+        return value
 
 
 class BookChapterMetadata(BaseModel):
