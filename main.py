@@ -5,6 +5,7 @@ import os
 import shutil
 from asyncio import TaskGroup
 from io import BytesIO
+from typing import Any
 
 import pyppeteer
 import pydantic
@@ -109,23 +110,26 @@ async def main():
     if not os.path.exists(book_chapter_cache_dir):
         os.makedirs(book_chapter_cache_dir)
 
-    browser = await pyppeteer.launch(
-        options={
-            "headless": True,
-            "autoClose": False,
-            "args": [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-accelerated-2d-canvas",
-                "--no-first-run",
-                "--no-zygote",
-                "--disable-web-security",
-                "--webkit-print-color-adjust",
-                "--disable-extensions",
-            ],
-        },
-    )
+    options: dict[str, Any] = {
+        "headless": True,
+        "autoClose": False,
+        "args": [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-accelerated-2d-canvas",
+            "--no-first-run",
+            "--no-zygote",
+            "--disable-web-security",
+            "--webkit-print-color-adjust",
+            "--disable-extensions",
+        ],
+    }
+
+    if config.chromium_executable_path is not None:
+        options["executablePath"] = config.chromium_executable_path
+
+    browser = await pyppeteer.launch(options=options)
 
     pages = {}
     async with TaskGroup() as task_group:
