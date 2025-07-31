@@ -15,3 +15,5 @@ class Settings(BaseSettings):
 
     cache_dir: str = DEFAULT_CACHE_DIR
     task_concurrency: int = 50
+
+    chromium_executable_path: str | None = None
